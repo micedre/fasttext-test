@@ -8,12 +8,15 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import train_test_split
 from collections import Counter
 from itertools import chain
-import re
 import matplotlib.pyplot as plt
+import pandas as pd
+from sklearn.metrics import confusion_matrix, precision_score, recall_score
+
+
 
 # ## 2. Dataset Preparation
 class FastTextDataset(Dataset):
-    def __init__(self, texts, labels, vocab=None, ngram_range=(3, 4), min_freq=5):
+    def __init__(self, texts, labels, vocab=None, ngram_range=(3, 4), min_freq=1):
         """
         Initialize the dataset with texts, labels, and optional vocabulary.
         """
@@ -101,14 +104,33 @@ class FastTextClassifier(nn.Module):
 
 # ## 4. Training and Evaluation
 # ### Sample Dataset for Testing
-texts = [
-    "I loved the movie",
-    "The plot was dull",
-    "Amazing direction and acting",
-    "Waste of my time",
-    "Outstanding performances",
-]
-labels = ["positive", "negative", "positive", "negative", "positive"]
+
+
+df_train = pd.read_csv('dbpedia_train.csv',header=None)
+df_train = df_train.sample(10000)
+
+
+texts = df_train[2].tolist()
+labels = df_train[0].tolist()
+
+# print(f"texts : {len(texts)}")
+
+# print(f"labels : {len(labels)}")
+
+# texts = [
+#     "I loved the movie",
+#     "The plot was dull",
+#     "Amazing direction and acting",
+#     "Waste of my time",
+#     "Outstanding performances",
+#     "Awful acting",
+#     "I threw up",
+#     "Meh...",
+#     "Amazingly bad acting",
+#     "Surprisingly good",
+#     "Conforting"
+# ]
+# labels = ["positive", "negative", "positive", "negative", "positive","negative","negative","negative","negative","positive","positive"]
 
 # Split into train and validation sets
 train_texts, val_texts, train_labels, val_labels = train_test_split(
@@ -137,11 +159,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=0.01)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
 
 # ### Training Loop
-num_epochs = 5
+num_epochs = 20
 train_losses, val_losses, val_accuracies = [], [], []
 
 for epoch in range(num_epochs):
@@ -192,6 +214,7 @@ plt.ylabel("Value")
 plt.legend()
 plt.title("Training and Validation Metrics")
 plt.show()
+plt.savefig('foo.png')
 
 # ## 5. Prediction
 
@@ -206,7 +229,45 @@ def predict(text, model, dataset):
         predicted_label = outputs.argmax(dim=1).item()
         return list(dataset.label_map.keys())[predicted_label]
 
-# Example Prediction
-test_text = "The direction was brilliant"
-predicted_sentiment = predict(test_text, model, train_dataset)
-print(f"Predicted sentiment: {predicted_sentiment}")
+
+
+df_test = pd.read_csv('dbpedia_test.csv',header=None)
+print("**************************************************************")
+
+# ## 5. Testing and Predictions
+def predict(text, model, dataset):
+    model.eval()
+    text_ngrams = dataset.text_to_ngrams(text)
+    text_indices = torch.tensor([[dataset.vocab.get(ngram, 0) for ngram in text_ngrams]])
+    with torch.no_grad():
+        outputs = model(text_indices)
+        predicted_label = outputs.argmax(dim=1).item()
+        return "".join(list(dataset.label_map.keys())[predicted_label])
+
+
+def predict_series(serie, model, dataset):
+    output = list("")
+    for x in serie:
+        output.append(predict(x, model, dataset))
+    return output
+
+
+# print(predict_series(df_prediction["description"],model,dataset))
+# df_prediction = df_test.sample(20).assign(predicted=lambda x: predict(x[2],model,dataset))
+df_prediction = df_test.rename(columns={0: "class", 1: "name", 2: "description"})
+# print(df_prediction["description"].count())
+df_prediction = df_prediction.assign(predicted=predict_series(df_prediction["description"], model, train_dataset))
+
+y_true = df_prediction['class']
+y_pred = df_prediction['predicted']
+
+
+# Macro and Micro averaged Precision and Recall
+macro_precision = precision_score(y_true, y_pred, average='macro')
+macro_recall = recall_score(y_true, y_pred, average='macro')
+micro_precision = precision_score(y_true, y_pred, average='micro')
+micro_recall = recall_score(y_true, y_pred, average='micro')
+print(f"Macro Precision: {macro_precision:.2%}")
+print(f"Macro Recall: {macro_recall:.2%}")
+print(f"Micro Precision: {micro_precision:.2%}")
+print(f"Micro Recall:{micro_recall:.2%}")
